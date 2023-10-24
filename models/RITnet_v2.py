@@ -19,8 +19,8 @@ def getSizes(chz, growth, blks=4):
     sizes = {'enc': {'inter': [], 'ip': [], 'op': []},
              'dec': {'skip': [], 'ip': [], 'op': []}}
     sizes['enc']['inter'] = np.array([chz * (i + 1) for i in range(0, blks)])
-    sizes['enc']['op'] = np.array([np.int(growth * chz * (i + 1)) for i in range(0, blks)])
-    sizes['enc']['ip'] = np.array([chz] + [np.int(growth * chz * (i + 1)) for i in range(0, blks - 1)])
+    sizes['enc']['op'] = np.array([int(growth * chz * (i + 1)) for i in range(0, blks)])
+    sizes['enc']['ip'] = np.array([chz] + [int(growth * chz * (i + 1)) for i in range(0, blks - 1)])
 
     # Decoder sizes
     sizes['dec']['skip'] = sizes['enc']['ip'][::-1] + sizes['enc']['inter'][::-1]

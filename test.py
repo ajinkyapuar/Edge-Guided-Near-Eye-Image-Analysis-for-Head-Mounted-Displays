@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, cv2, sys, yaml, tqdm, torch, pickle, resource
+import os, cv2, sys, yaml, tqdm, torch, pickle #, resource
 import numpy as np
 import matplotlib.pyplot as plt
 from calc_box_iou import calc_ell_bbox_iou
@@ -24,8 +24,8 @@ from utils import getSeg_metrics, getPoint_metric, generateImageGrid, unnormPts
 from helperfunctions import my_ellipse
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
 
-rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (2048*10, rlimit[1]))
+# rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+# resource.setrlimit(resource.RLIMIT_NOFILE, (2048*10, rlimit[1]))
 
 
 def calc_acc(args, testloader, model, edge_model, device, return_all = False, disp=0):

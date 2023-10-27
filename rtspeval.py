@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Fri Jan 29 03:34:22 2021
-
-@author: rakshit
-"""
-
 import os, pickle
 import sys
 import cv2
@@ -64,7 +56,7 @@ def parse_args():
     pprint(opt)
     return args
 
-#%% Preprocessing functions and module
+## Preprocessing functions and module
 # Input frames must be resized to 320X240
 def preprocess_frame(img, op_shape, align_width=True):
     if align_width:
@@ -102,13 +94,17 @@ def preprocess_frame(img, op_shape, align_width=True):
     img = (img - img.mean())/img.std()
     img = torch.from_numpy(img).unsqueeze(0).to(torch.float32) # Add a dummy color channel
     return img, scale_shift
+
+
 def calc_edge(img, edge_model):
     img_edge = edge_model(torch.cat((img, img, img), dim=1))[-1]
     # if (args.edge_thres == 1):
     #     rt = torch.ones(img_edge.size()).to(device).to(args.prec)
     #     img_edge = torch.where(img_edge >= 0.1, rt, img_edge)
     return img_edge
-#%% Forward operation on network
+
+
+# Forward operation on network
 def evaluate_ellseg_on_image(frame, model, edge_model, device=torch.device("cuda")):
 
     assert len(frame.shape) == 4, 'Frame must be [1,1,H,W]'
@@ -165,7 +161,8 @@ def evaluate_ellseg_on_image(frame, model, edge_model, device=torch.device("cuda
 
     return frame_edge.detach().cpu().squeeze().numpy(), seg_map.numpy(), pupil_ellipse, iris_ellipse
 
-#%% Rescale operation to bring segmap, pupil and iris ellipses back to original res
+
+# Rescale operation to bring segmap, pupil and iris ellipses back to original res
 def rescale_to_original(edge_map, seg_map, pupil_ellipse, iris_ellipse, scale_shift, orig_shape):
 
     # Fix pupil ellipse
@@ -191,171 +188,29 @@ def rescale_to_original(edge_map, seg_map, pupil_ellipse, iris_ellipse, scale_sh
     edge_map = cv2.resize(edge_map, (orig_shape[1], orig_shape[0]), interpolation=cv2.INTER_NEAREST)
     return edge_map, seg_map, pupil_ellipse, iris_ellipse
 
-#%% Definition for processing per video
-def evaluate_ellseg_per_video(path_vid, args, model, edge_model):
-    path_dir, full_file_name = os.path.split(path_vid)
-    print('evaluate {}...'.format(full_file_name))
-    file_name = os.path.splitext(full_file_name)[0]
-
-    if args.eval_on_cpu:
-        device=torch.device("cpu")
-    else:
-        device=torch.device("cuda")
-
-    if args.check_for_string_in_fname in file_name:
-        print('Processing file: {}'.format(path_vid))
-    else:
-        print('Skipping video {}'.format(path_vid))
-        return False
-
-    vid_obj = cv2.VideoCapture(str(path_vid))
-
-    FR_COUNT = vid_obj.get(cv2.CAP_PROP_FRAME_COUNT)
-    FR = vid_obj.get(cv2.CAP_PROP_FPS)
-    H  = vid_obj.get(cv2.CAP_PROP_FRAME_HEIGHT)
-    W  = vid_obj.get(cv2.CAP_PROP_FRAME_WIDTH)
-
-    path_vid_out = os.path.join(path_dir, file_name+'_result_' + args.method + '.mp4')
-    edge_filename = os.path.join(path_dir, file_name+'_edge_' + args.method + '.mp4')
-    # if(os.path.exists(path_vid_out)):
-    #     return 0
-    print('!!!generate {}...'.format(path_vid_out))
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    vid_out = cv2.VideoWriter(path_vid_out, fourcc, int(FR), (int(W), int(H)))
-    edge_out = cv2.VideoWriter(edge_filename, fourcc, int(FR), (int(W), int(H)))
-    # Dictionary to save output ellipses
-    ellipse_out_dict = {}
-
-    ret = True
-    pbar = tqdm(total=FR_COUNT)
-
-    counter = 0
-    j = 0
-    app_center = [[], []]
-    while ret:
-        ret, ori_frame = vid_obj.read()
-        print(ori_frame.shape)
-        copy_frame = copy.deepcopy(ori_frame)
-        if ret == False:
-            continue
-        tmp_an = []
-        eye_splited_img = [0, 1]
-        for i in range(2):
-            eye_splited_img[i] = ori_frame[:, (0 + i * 320): (320 + i * 320), :]
-
-            frame = cv2.cvtColor(eye_splited_img[i], cv2.COLOR_BGR2GRAY)
-
-            frame_scaled_shifted, scale_shift = preprocess_frame(frame, (240, 320), args.align_width)
-
-            input_tensor = frame_scaled_shifted.unsqueeze(0).to(device)
-
-            # Run the prediction network
-            edge_map, seg_map, pupil_ellipse, iris_ellipse = evaluate_ellseg_on_image(input_tensor, model, edge_model)
-           # print('!!!{} {} :'.format(j, i), pupil_ellipse)
-            app_center[i].append((pupil_ellipse[0], pupil_ellipse[1]))
-            # Return ellipse predictions back to original dimensions
-            # if(i == 1):
-            #     if j == 0:
-            #         # print('test2', disp.shape)
-            #         # print('test ', disp.permute(1, 2, 0).shape)
-            #         h_im = plt.imshow(disp.permute(1, 2, 0))
-            #         plt.pause(1)
-            #     else:
-            #         h_im.set_data(disp.permute(1, 2, 0))
-            #         mypause(1)
-            # print(' seg_map : ', seg_map.shape)
-            # print('edge_map : ', edge_map.shape)
-            edge_map *= 255
-            edge_map = 255 - edge_map
-            edge_map, seg_map, pupil_ellipse, iris_ellipse = rescale_to_original(edge_map, seg_map, pupil_ellipse, iris_ellipse,
-                                                                       scale_shift, frame.shape)
-            tmp_an.extend(pupil_ellipse)
-            tmp_an.extend(iris_ellipse)
-            ellipse_out_dict[j] = (iris_ellipse, pupil_ellipse)
-            # Generate visuals
-            frame_overlayed_with_op = plot_segmap_ellpreds(frame, seg_map, pupil_ellipse, iris_ellipse)
-
-            ori_frame[:, (0 + i * 320): (320 + i * 320), :] = frame_overlayed_with_op
-            edge_map_stack = np.stack([edge_map for i in range(0, 3)], axis=2)
-           # print('before edge_map_stack.shape : ', edge_map_stack.shape)
-            #edge_map_stack = np.moveaxis(edge_map_stack, 0, 3)
-            #print('edge_map_stack.shape : ', edge_map_stack.shape)
-            copy_frame[:, (0 + i * 320): (320 + i * 320), :] = edge_map_stack
-        #datas.append(tmp_an)
-        cv2.putText(ori_frame, str(j), (10, 30), cv2.FONT_HERSHEY_PLAIN, 2.0, (0, 0, 255), 2)
-        vid_out.write(ori_frame)
-        edge_out.write(copy_frame)
-        j += 1
-        pbar.update(1)
-        counter += 1
-    filename = 'data/app_centers.pkl'
-    print('pickle.dump : {} itmes..'.format(len(app_center[0])))
-    f = open(filename, 'wb')
-    pickle.dump(app_center, f)
-    f.close()
-
-    vid_out.release()
-    edge_out.release()
-    vid_obj.release()
-    pbar.close()
-
-    # Save out ellipse dictionary
-    np.save(os.path.join(path_dir, file_name+'_pred2_' + args.method + '.npy'), ellipse_out_dict)
-    print('Save ellipse_out_dict to {}....'.format(file_name+'_pred2_' + args.method + '.npy'))
-
-    return True
 
 import yaml
 def get_config(config):
     with open(config, 'r') as stream:
         # return yaml.load(stream)
         return yaml.full_load(stream)
-    
+
 if __name__=='__main__':
+
+    # RTSP URL of the stream from TouchDesigner
+    rtsp_url = "rtsp://127.0.0.1:554/tdvidstream"
+
+
     args = parse_args()
     args.prec = torch.float32
-    # Load Edge Extract Network
+    # Load Edge Extr act Network
     BDCN_network = BDCN()
 
-    #state_dict = torch.load('GMM_gen.pt')
-    print('!!!!!!!!!! gen_00000016.pt')
     state_dict = torch.load('gen_00000016.pt')
-    print('Attention!!!!!!! this edge model is trained in real dataset....')
     BDCN_network.load_state_dict(state_dict['a'])
     BDCN_network = BDCN_network.cuda()
     BDCN_network.eval()
-    # img = cv2.imread("our_data_test/matched.png")
-    # frame = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #
-    # frame_scaled_shifted, scale_shift = preprocess_frame(frame, (240, 320), args.align_width)
-    #
-    # input_tensor = frame_scaled_shifted.unsqueeze(0).to(torch.device("cuda"))
-    # input_edge = calc_edge(input_tensor, BDCN_network)
-    # print(input_edge.shape)
-    # I = input_edge[0][0].detach().cpu().numpy().squeeze()
-    # I *= 255
-    # I = 255 - I
-    # print(I.shape)
-    # # cv2.imwrite(os.path.join('img', args.curObj, args.visual_dir,
-    # #                          str(id) + '_edge_' + args.method + '.jpg'), I)
-    # cv2.imwrite(os.path.join('our_data_test', 'img_edge2.png'), I)
-    # exit(0)
-
-
-    #%% Load network, weights and get ready to evalute
-    # # DeepVOG
-    # model_file = ''
-    # args.method = 'deepvog'
-    # # RITNet
-    # model_file = ''
-    # args.method = 'ritnet'
-
-    # EllSeg
-    # model_file = 'logs/baseline_37.pkl'
-    # model_file = 'weights/al1.git_ok'
-    # setting_file = 'configs/baseline.yaml'
-    # args.method = 'baseline'
-
+    
     # # edge
     model_file = 'baseline_edge_16.pkl'
     setting_file = 'configs/baseline_edge.yaml'
@@ -374,10 +229,137 @@ if __name__=='__main__':
     if not args.eval_on_cpu:
         model.cuda()
 
-    #%% Read in each video
-    path_obj = Path(args.path2data).rglob('*.avi')
+    if args.eval_on_cpu:
+        device=torch.device("cpu")
+    else:
+        device=torch.device("cuda")
 
-    for path_vid in path_obj:
-        if '_ellseg' not in str(path_vid):
-            evaluate_ellseg_per_video(path_vid, args, model, BDCN_network)
+    # if args.check_for_string_in_fname in file_name:
+    #     print('Processing file: {}'.format(path_vid))
+    # else:
+    #     print('Skipping video {}'.format(path_vid))
+    #     return False
 
+    # vid_obj = cv2.VideoCapture(str(path_vid))
+
+    # Create a VideoCapture object to read the RTSP stream
+    vid_obj = cv2.VideoCapture(rtsp_url)
+
+    # FR_COUNT = vid_obj.get(cv2.CAP_PROP_FRAME_COUNT)
+    # FR = vid_obj.get(cv2.CAP_PROP_FPS)
+    # H  = vid_obj.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    # W  = vid_obj.get(cv2.CAP_PROP_FRAME_WIDTH)
+
+    # path_vid_out = os.path.join(path_dir, file_name+'_result_' + args.method + '.mp4')
+    # edge_filename = os.path.join(path_dir, file_name+'_edge_' + args.method + '.mp4')
+    # if(os.path.exists(path_vid_out)):
+    #     return 0
+    # print('!!!generate {}...'.format(path_vid_out))
+    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # vid_out = cv2.VideoWriter(path_vid_out, fourcc, int(FR), (int(W), int(H)))
+    # edge_out = cv2.VideoWriter(edge_filename, fourcc, int(FR), (int(W), int(H)))
+    # Dictionary to save output ellipses
+    ellipse_out_dict = {}
+
+    # ret = True
+    # pbar = tqdm(total=FR_COUNT)
+
+    counter = 0
+    j = 0
+    app_center = [[], []]
+    while True:
+        ret, ori_frame = vid_obj.read()
+
+        if not ret:
+            break
+
+
+        # cv2.imshow("RTSP Stream", ori_frame)
+        print(ori_frame.shape)
+
+        #Region Process Frame
+        copy_frame = copy.deepcopy(ori_frame)
+        
+
+        tmp_an = []
+        eye_splited_img = [0, 1]
+        for i in range(2):
+            eye_splited_img[i] = ori_frame[:, (0 + i * 320): (320 + i * 320), :]
+
+            frame = cv2.cvtColor(eye_splited_img[i], cv2.COLOR_BGR2GRAY)
+
+            frame_scaled_shifted, scale_shift = preprocess_frame(frame, (240, 320), args.align_width)
+            input_tensor = frame_scaled_shifted.unsqueeze(0).to(device)
+
+            # Run the prediction network
+            edge_map, seg_map, pupil_ellipse, iris_ellipse = evaluate_ellseg_on_image(input_tensor, model, BDCN_network)
+           # print('!!!{} {} :'.format(j, i), pupil_ellipse)
+            app_center[i].append((pupil_ellipse[0], pupil_ellipse[1]))
+            # Return ellipse predictions back to original dimensions
+            # if(i == 1):
+            #     if j == 0:
+            #         # print('test2', disp.shape)
+            #         # print('test ', disp.permute(1, 2, 0).shape)
+            #         h_im = plt.imshow(disp.permute(1, 2, 0))
+            #         plt.pause(1)
+            #     else:
+            #         h_im.set_data(disp.permute(1, 2, 0))
+            #         mypause(1)
+            # print(' seg_map : ', seg_map.shape)
+            # print('edge_map : ', edge_map.shape)
+        
+            edge_map *= 255
+            edge_map = 255 - edge_map
+            edge_map, seg_map, pupil_ellipse, iris_ellipse = rescale_to_original(edge_map, seg_map, pupil_ellipse, iris_ellipse,
+                                                                       scale_shift, frame.shape)
+            tmp_an.extend(pupil_ellipse)
+            tmp_an.extend(iris_ellipse)
+            ellipse_out_dict[j] = (iris_ellipse, pupil_ellipse)
+            # Generate visuals
+            frame_overlayed_with_op = plot_segmap_ellpreds(frame, seg_map, pupil_ellipse, iris_ellipse)
+
+            ori_frame[:, (0 + i * 320): (320 + i * 320), :] = frame_overlayed_with_op
+            edge_map_stack = np.stack([edge_map for i in range(0, 3)], axis=2)
+           # print('before edge_map_stack.shape : ', edge_map_stack.shape)
+            #edge_map_stack = np.moveaxis(edge_map_stack, 0, 3)
+            #print('edge_map_stack.shape : ', edge_map_stack.shape)
+            copy_frame[:, (0 + i * 320): (320 + i * 320), :] = edge_map_stack
+        #datas.append(tmp_an)
+        # cv2.putText(ori_frame, str(j), (10, 30), cv2.FONT_HERSHEY_PLAIN, 2.0, (0, 0, 255), 2)
+        # cv2.imshow("Edge Stream", copy_frame)
+        cv2.imshow("Segment Stream", ori_frame)
+        
+        # vid_out.write(ori_frame)
+        # edge_out.write(copy_frame)
+        j += 1
+        counter += 1
+        # filename = 'data/app_centers.pkl'
+        # print('pickle.dump : {} itmes..'.format(len(app_center[0])))
+        # f = open(filename, 'wb')
+        # pickle.dump(app_center, f)
+        # f.close()
+
+        # vid_out.release()
+        # edge_out.release()
+        # vid_obj.release()
+        # pbar.close()
+
+        # # Save out ellipse dictionary
+        # np.save(os.path.join(path_dir, file_name+'_pred2_' + args.method + '.npy'), ellipse_out_dict)
+        # print('Save ellipse_out_dict to {}....'.format(file_name+'_pred2_' + args.method + '.npy'))
+
+        # return True
+        
+
+        #EndRegion
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    
+    vid_obj.release()
+    cv2.destroyAllWindows()
+
+    
+
+    
